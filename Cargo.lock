@@ -28,7 +28,7 @@ dependencies = [
 
 [[package]]
 name = "async-pcap"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pcap",
  "tokio",
