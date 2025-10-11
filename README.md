@@ -16,28 +16,24 @@
 ## Usage
 
 ```rust
-use async_capture::{AsyncCapture, Capture, Active};
-use tokio::runtime::Runtime;
+use async_pcap::{AsyncCapture, Capture, Device};
 
-fn main() {
-    // Create a Tokio runtime
-    let rt = Runtime::new().unwrap();
+#[tokio::main]
+async fn main() {
+    let device = Device::lookup().unwrap().unwrap();
+    let cap = Capture::from_device(device)
+        .unwrap()
+        .promisc(true)
+        .snaplen(65535)
+        .timeout(500)
+        .immediate_mode(true)
+        .open()
+        .unwrap();
+    let cap = AsyncCapture::new(cap);
 
-    rt.block_on(async {
-        // Open the default network device
-        let cap = Capture::from_device("eth0")
-            .unwrap()
-            .open()
-            .unwrap();
-
-        // Wrap it in an async capture
-        let async_cap = AsyncCapture::new(cap);
-
-        // Await packets
-        while let Some(packet) = async_cap.next_packet().await {
-            println!("Captured packet with {} bytes", packet.data.len());
-        }
-    });
+    while let Some(packet) = cap.next_packet().await {
+        println!("Captured packet with {} bytes", packet.data.len());
+    }
 }
 ```
 
