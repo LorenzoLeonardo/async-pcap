@@ -65,14 +65,24 @@ impl AsyncCapture {
     ///
     /// ```no_run
     /// use tokio::runtime::Runtime;
-    /// use async_pcap::AsyncCapture;
+    /// use async_pcap::{AsyncCapture, Capture};
     ///
     /// let rt = Runtime::new().unwrap();
     /// rt.block_on(async {
-    ///     if let Some(packet) = async_cap.next_packet().await {
-    ///         println!("Got packet with {} bytes", packet.data.len());
-    ///     }
-    /// });
+    ///    // Open the default network device
+    ///    let cap = Capture::from_device("eth0")
+    ///        .unwrap()
+    ///        .open()
+    ///        .unwrap();
+    ///
+    ///    // Wrap it in an async capture
+    ///    let async_cap = AsyncCapture::new(cap);
+    ///
+    ///    // Await packets
+    ///    while let Some(packet) = async_cap.next_packet().await {
+    ///        println!("Captured packet with {} bytes", packet.data.len());
+    ///    }
+    ///});
     /// ```
     pub async fn next_packet(&self) -> Option<Packet> {
         let mut rx = self.rx.lock().await;
