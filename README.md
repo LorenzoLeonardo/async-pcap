@@ -49,7 +49,14 @@ fn main() {
 
         // Read packets asynchronously
         while let Some(packet) = async_cap.next_packet().await {
-            println!("Captured packet: {} bytes", packet.data.len());
+            match packet {
+                Ok(packet) => {
+                    println!("Packet: {}", packet.data.len());
+                }
+                Err(e) => {
+                    println!("{e}");
+                }
+            }
         }
 
         println!("Capture loop exited cleanly");

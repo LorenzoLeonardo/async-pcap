@@ -1,4 +1,7 @@
-use pcap::{Active, Capture, PacketHeader};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use pcap::{Active, Capture, Error, PacketHeader};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
@@ -24,7 +27,7 @@ pub struct AsyncCapture {
 /// or a stop signal to terminate the capture.
 enum PacketOrStop {
     /// A captured packet
-    Packet(Packet),
+    Packet(Result<Packet, Error>),
     /// Signal that capture has stopped
     Stop,
 }
@@ -36,6 +39,7 @@ enum PacketOrStop {
 #[derive(Clone)]
 pub struct AsyncCaptureHandle {
     tx: UnboundedSender<PacketOrStop>,
+    stop_flag: Arc<AtomicBool>,
 }
 
 impl AsyncCapture {
@@ -47,14 +51,20 @@ impl AsyncCapture {
     /// Returns a tuple of `(AsyncCapture, AsyncCaptureHandle)`.
     pub fn new(mut cap: Capture<Active>) -> (Self, AsyncCaptureHandle) {
         let (tx, rx) = unbounded_channel::<PacketOrStop>();
-        let handle = AsyncCaptureHandle { tx: tx.clone() };
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let handle = AsyncCaptureHandle {
+            tx: tx.clone(),
+            stop_flag,
+        };
 
         std::thread::spawn(move || {
-            while let Ok(packet) = cap.next_packet() {
-                let owned = Packet {
+            loop {
+                let res = cap.next_packet();
+
+                let owned = res.map(|packet| Packet {
                     header: *packet.header,
                     data: packet.data.to_vec(),
-                };
+                });
                 if tx.send(PacketOrStop::Packet(owned)).is_err() {
                     // Receiver dropped, exit thread
                     break;
@@ -69,9 +79,9 @@ impl AsyncCapture {
 
     /// Waits for the next packet asynchronously.
     ///
-    /// Returns `Some(Packet)` if a packet is received,
+    /// Returns `Some(Result<Packet, Error>)` if a packet is received,
     /// or `None` if the capture has stopped.
-    pub async fn next_packet(&self) -> Option<Packet> {
+    pub async fn next_packet(&self) -> Option<Result<Packet, Error>> {
         let mut rx = self.rx.lock().await;
         match rx.recv().await {
             Some(PacketOrStop::Packet(pkt)) => Some(pkt),
@@ -86,6 +96,7 @@ impl AsyncCaptureHandle {
     /// Sends a stop signal to the capture thread, causing
     /// `AsyncCapture::next_packet()` to return `None`.
     pub fn stop(&self) {
+        self.stop_flag.store(true, Ordering::Relaxed);
         let _ = self.tx.send(PacketOrStop::Stop);
     }
 }
