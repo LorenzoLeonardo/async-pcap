@@ -46,7 +46,7 @@ impl AsyncCapture {
             while let Ok(packet) = cap.next_packet() {
                 // Copy the data into owned Vec<u8>
                 let owned = Packet {
-                    header: packet.header.clone(),
+                    header: *packet.header,
                     data: packet.data.to_vec(),
                 };
                 // Ignore send errors if receiver is dropped
