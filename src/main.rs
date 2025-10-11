@@ -1,6 +1,4 @@
-use async_pcap::AsyncCapture;
-use pcap::Capture;
-use pcap::Device;
+use async_pcap::{AsyncCapture, Capture, Device};
 
 #[tokio::main]
 async fn main() {
@@ -15,6 +13,7 @@ async fn main() {
         .unwrap();
     let cap = AsyncCapture::new(cap);
 
-    let res = cap.next_packet().await;
-    println!("{res:?}");
+    while let Some(packet) = cap.next_packet().await {
+        println!("Captured packet with {} bytes", packet.data.len());
+    }
 }
