@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use pcap::{Active, Capture, Error, PacketHeader};
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 /// Represents a network packet with its header and raw data.
 #[derive(Debug, Clone)]
@@ -38,7 +38,6 @@ enum PacketOrStop {
 /// thread or async task.
 #[derive(Clone)]
 pub struct AsyncCaptureHandle {
-    tx: UnboundedSender<PacketOrStop>,
     stop_flag: Arc<AtomicBool>,
 }
 
@@ -53,14 +52,13 @@ impl AsyncCapture {
         let (tx, rx) = unbounded_channel::<PacketOrStop>();
         let stop_flag = Arc::new(AtomicBool::new(false));
         let handle = AsyncCaptureHandle {
-            tx: tx.clone(),
             stop_flag: stop_flag.clone(),
         };
 
         std::thread::spawn(move || {
             loop {
                 if stop_flag.load(Ordering::Relaxed) {
-                    log::info!("AsyncCapture thread is aborted.");
+                    eprintln!("AsyncCapture thread is aborted.");
                     break;
                 }
                 let res = cap.next_packet();
@@ -71,7 +69,7 @@ impl AsyncCapture {
                 });
                 if let Err(e) = tx.send(PacketOrStop::Packet(owned)) {
                     // Receiver dropped, exit thread
-                    log::debug!("{e}");
+                    eprintln!("{e}");
                     break;
                 }
             }
@@ -110,9 +108,7 @@ impl AsyncCaptureHandle {
     /// - After calling `stop`, any future calls to
     ///   [`AsyncCapture::next_packet()`] will immediately return `None`.
     pub fn stop(&self) {
-        if !self.stop_flag.swap(true, Ordering::Relaxed) {
-            let _ = self.tx.send(PacketOrStop::Stop);
-        }
+        self.stop_flag.store(true, Ordering::Relaxed);
     }
 }
 
@@ -132,9 +128,6 @@ impl Drop for AsyncCaptureHandle {
     /// - The capture thread will only be stopped automatically when the
     ///   **last** handle is dropped.
     fn drop(&mut self) {
-        // Auto-stop when the last handle is dropped
-        if Arc::strong_count(&self.stop_flag) == 1 {
-            self.stop();
-        }
+        self.stop();
     }
 }
