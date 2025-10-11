@@ -57,19 +57,18 @@ impl AsyncCapture {
 
         std::thread::spawn(move || {
             loop {
-                if stop_flag.load(Ordering::Relaxed) {
-                    eprintln!("AsyncCapture thread is aborted.");
-                    break;
-                }
                 let res = cap.next_packet();
-
                 let owned = res.map(|packet| Packet {
                     header: *packet.header,
                     data: packet.data.to_vec(),
                 });
                 if let Err(e) = tx.send(PacketOrStop::Packet(owned)) {
                     // Receiver dropped, exit thread
-                    eprintln!("{e}");
+                    log::warn!("{e}");
+                    break;
+                }
+                if stop_flag.load(Ordering::Relaxed) {
+                    log::warn!("AsyncCapture thread is aborted.");
                     break;
                 }
             }
@@ -109,25 +108,5 @@ impl AsyncCaptureHandle {
     ///   [`AsyncCapture::next_packet()`] will immediately return `None`.
     pub fn stop(&self) {
         self.stop_flag.store(true, Ordering::Relaxed);
-    }
-}
-
-impl Drop for AsyncCaptureHandle {
-    /// Automatically stops the capture when the last handle is dropped.
-    ///
-    /// This ensures that the background capture thread is terminated
-    /// even if [`AsyncCaptureHandle::stop()`] was not called explicitly.
-    ///
-    /// When the last instance of this handle is dropped, the stop flag
-    /// is set, and a `Stop` signal is sent to notify all waiting receivers.
-    ///
-    /// # Notes
-    ///
-    /// - Dropping cloned handles does **not** stop the capture as long as
-    ///   other handles still exist.
-    /// - The capture thread will only be stopped automatically when the
-    ///   **last** handle is dropped.
-    fn drop(&mut self) {
-        self.stop();
     }
 }
