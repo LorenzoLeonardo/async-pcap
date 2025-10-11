@@ -2,6 +2,13 @@
 name = "async-pcap"
 version = "0.1.0"
 edition = "2024"
+authors = ["Lorenzo Leonardo <enzotechcomputersolutions@gmail.com>"]
+description = "An asynchronous implementation of pcap."
+license = "MIT"
+repository = "https://github.com/LorenzoLeonardo/async-pcap"
+homepage = "https://github.com/LorenzoLeonardo/async-pcap"
+documentation = "https://docs.rs/async-pcap"
+readme = "README.md"
 
 [dependencies]
 pcap = "2.3"
