@@ -1,91 +1,91 @@
-use pcap::Active;
-use pcap::Capture;
-use pcap::PacketHeader;
+use pcap::{Active, Capture, PacketHeader};
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-/// Represents an owned packet captured from the network.
-///
-/// This struct contains the packet header and the packet data as a `Vec<u8>`,
-/// allowing it to be safely stored and sent across threads.
+/// Represents a network packet with its header and raw data.
 #[derive(Debug, Clone)]
 pub struct Packet {
+    /// Packet header information provided by pcap
     pub header: PacketHeader,
+    /// Raw packet data
     pub data: Vec<u8>,
 }
 
-/// An asynchronous wrapper around a `pcap::Capture<Active>`.
-///
-/// This allows capturing packets in a non-blocking, async context using Tokio.
-/// Internally, it spawns a dedicated thread to poll packets and sends them
-/// through a channel that can be awaited asynchronously.
+/// An asynchronous wrapper around a `pcap::Capture`.
+///  
+/// `AsyncCapture` owns the receiver side of a channel that receives
+/// captured packets or a stop signal. It allows async code to
+/// `await` new packets without blocking a thread.
 pub struct AsyncCapture {
-    rx: Mutex<UnboundedReceiver<Packet>>,
+    rx: Mutex<UnboundedReceiver<PacketOrStop>>,
+}
+
+/// Enum used internally to represent either a captured packet
+/// or a stop signal to terminate the capture.
+enum PacketOrStop {
+    /// A captured packet
+    Packet(Packet),
+    /// Signal that capture has stopped
+    Stop,
+}
+
+/// Handle to control the asynchronous capture.
+///  
+/// `AsyncCaptureHandle` allows stopping the capture from another
+/// thread or async task.
+#[derive(Clone)]
+pub struct AsyncCaptureHandle {
+    tx: UnboundedSender<PacketOrStop>,
 }
 
 impl AsyncCapture {
-    /// Creates a new asynchronous capture from an active `pcap` capture.
+    /// Creates a new asynchronous capture from a `pcap::Capture<Active>`.
     ///
-    /// # Arguments
+    /// Spawns a background thread that reads packets and sends them
+    /// through a channel for async consumption.
     ///
-    /// * `cap` - A `Capture<Active>` object representing the pcap device.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use async_pcap::{AsyncCapture, Capture, Active};
-    ///
-    /// let mut cap = Capture::from_device("eth0").unwrap().open().unwrap();
-    /// let async_cap = AsyncCapture::new(cap);
-    /// ```
-    pub fn new(mut cap: Capture<Active>) -> Self {
-        let (tx, rx) = unbounded_channel::<Packet>();
+    /// Returns a tuple of `(AsyncCapture, AsyncCaptureHandle)`.
+    pub fn new(mut cap: Capture<Active>) -> (Self, AsyncCaptureHandle) {
+        let (tx, rx) = unbounded_channel::<PacketOrStop>();
+        let handle = AsyncCaptureHandle { tx: tx.clone() };
 
-        // Spawn a dedicated thread to poll packets
         std::thread::spawn(move || {
             while let Ok(packet) = cap.next_packet() {
-                // Copy the data into owned Vec<u8>
                 let owned = Packet {
                     header: *packet.header,
                     data: packet.data.to_vec(),
                 };
-                // Ignore send errors if receiver is dropped
-                let _ = tx.send(owned);
+                if tx.send(PacketOrStop::Packet(owned)).is_err() {
+                    // Receiver dropped, exit thread
+                    break;
+                }
             }
+            // Send a Stop message when capture thread ends
+            let _ = tx.send(PacketOrStop::Stop);
         });
 
-        Self { rx: Mutex::new(rx) }
+        (Self { rx: Mutex::new(rx) }, handle)
     }
 
-    /// Asynchronously retrieves the next captured packet.
+    /// Waits for the next packet asynchronously.
     ///
-    /// Returns `None` if the sender has been dropped (e.g., the capture thread exited).
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use tokio::runtime::Runtime;
-    /// use async_pcap::{AsyncCapture, Capture};
-    ///
-    /// let rt = Runtime::new().unwrap();
-    /// rt.block_on(async {
-    ///    // Open the default network device
-    ///    let cap = Capture::from_device("eth0")
-    ///        .unwrap()
-    ///        .open()
-    ///        .unwrap();
-    ///
-    ///    // Wrap it in an async capture
-    ///    let async_cap = AsyncCapture::new(cap);
-    ///
-    ///    // Await packets
-    ///    while let Some(packet) = async_cap.next_packet().await {
-    ///        println!("Captured packet with {} bytes", packet.data.len());
-    ///    }
-    ///});
-    /// ```
+    /// Returns `Some(Packet)` if a packet is received,
+    /// or `None` if the capture has stopped.
     pub async fn next_packet(&self) -> Option<Packet> {
         let mut rx = self.rx.lock().await;
-        rx.recv().await
+        match rx.recv().await {
+            Some(PacketOrStop::Packet(pkt)) => Some(pkt),
+            Some(PacketOrStop::Stop) | None => None,
+        }
+    }
+}
+
+impl AsyncCaptureHandle {
+    /// Stops the capture from another thread or async task.
+    ///
+    /// Sends a stop signal to the capture thread, causing
+    /// `AsyncCapture::next_packet()` to return `None`.
+    pub fn stop(&self) {
+        let _ = self.tx.send(PacketOrStop::Stop);
     }
 }
