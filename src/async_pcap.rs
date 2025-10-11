@@ -54,19 +54,24 @@ impl AsyncCapture {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let handle = AsyncCaptureHandle {
             tx: tx.clone(),
-            stop_flag,
+            stop_flag: stop_flag.clone(),
         };
 
         std::thread::spawn(move || {
             loop {
+                if stop_flag.load(Ordering::Relaxed) {
+                    log::info!("AsyncCapture thread is aborted.");
+                    break;
+                }
                 let res = cap.next_packet();
 
                 let owned = res.map(|packet| Packet {
                     header: *packet.header,
                     data: packet.data.to_vec(),
                 });
-                if tx.send(PacketOrStop::Packet(owned)).is_err() {
+                if let Err(e) = tx.send(PacketOrStop::Packet(owned)) {
                     // Receiver dropped, exit thread
+                    log::debug!("{e}");
                     break;
                 }
             }
@@ -91,12 +96,45 @@ impl AsyncCapture {
 }
 
 impl AsyncCaptureHandle {
-    /// Stops the capture from another thread or async task.
+    /// Stops the capture from another thread or asynchronous task.
     ///
-    /// Sends a stop signal to the capture thread, causing
-    /// `AsyncCapture::next_packet()` to return `None`.
+    /// This method sets the internal stop flag, signaling the background
+    /// capture thread to terminate gracefully. It also sends a `Stop`
+    /// message through the internal channel to ensure that any awaiting
+    /// calls to [`AsyncCapture::next_packet()`] will return `None`.
+    ///
+    /// # Notes
+    ///
+    /// - Calling this method multiple times is safe and idempotent.
+    /// - Once stopped, the background thread will no longer produce packets.
+    /// - After calling `stop`, any future calls to
+    ///   [`AsyncCapture::next_packet()`] will immediately return `None`.
     pub fn stop(&self) {
-        self.stop_flag.store(true, Ordering::Relaxed);
-        let _ = self.tx.send(PacketOrStop::Stop);
+        if !self.stop_flag.swap(true, Ordering::Relaxed) {
+            let _ = self.tx.send(PacketOrStop::Stop);
+        }
+    }
+}
+
+impl Drop for AsyncCaptureHandle {
+    /// Automatically stops the capture when the last handle is dropped.
+    ///
+    /// This ensures that the background capture thread is terminated
+    /// even if [`AsyncCaptureHandle::stop()`] was not called explicitly.
+    ///
+    /// When the last instance of this handle is dropped, the stop flag
+    /// is set, and a `Stop` signal is sent to notify all waiting receivers.
+    ///
+    /// # Notes
+    ///
+    /// - Dropping cloned handles does **not** stop the capture as long as
+    ///   other handles still exist.
+    /// - The capture thread will only be stopped automatically when the
+    ///   **last** handle is dropped.
+    fn drop(&mut self) {
+        // Auto-stop when the last handle is dropped
+        if Arc::strong_count(&self.stop_flag) == 1 {
+            self.stop();
+        }
     }
 }

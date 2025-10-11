@@ -11,5 +11,6 @@ documentation = "https://docs.rs/async-pcap"
 readme = "README.md"
 
 [dependencies]
+log = "0.4"
 pcap = "2.3"
 tokio = { version = "1.47", features = ["full"] }
