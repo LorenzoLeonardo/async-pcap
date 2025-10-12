@@ -1,4 +1,6 @@
 mod async_pcap;
 
 pub use async_pcap::{AsyncCapture, AsyncCaptureHandle, Packet};
-pub use pcap::{Active, Capture, Dead, Device, Error, Inactive, Offline};
+pub use pcap::{
+    Active, Capture, ConnectionStatus, Dead, Device, DeviceFlags, Error, IfFlags, Inactive, Offline,
+};
